@@ -1,22 +1,33 @@
 package com.reyes.tutorial.config;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.cache.CacheManager;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.cache.annotation.CachingConfigurerSupport;
+import org.springframework.cache.concurrent.ConcurrentMapCacheManager;
+import org.springframework.cache.interceptor.CacheErrorHandler;
+import org.springframework.cache.interceptor.CacheResolver;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
 import org.springframework.data.redis.cache.RedisCacheManager;
 import org.springframework.data.redis.cache.RedisCacheWriter;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.RedisSerializationContext;
 import org.springframework.data.redis.serializer.RedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
+
+import com.reyes.tutorial.error.IgnoreExceptionCacheErrorHandler;
+
 import org.springframework.data.redis.serializer.RedisSerializationContext.SerializationPair;
 
 @Configuration
@@ -55,6 +66,9 @@ public class RedisConfig extends CachingConfigurerSupport {
 	 */
 	private final static Logger logger = LoggerFactory.getLogger(RedisConfig.class);
 	
+	@Autowired
+	private RedisConnectionFactory connectionFactory;
+	
 //	設置過期時間1天
 	private Duration timeToLive = Duration.ZERO;
 	
@@ -64,11 +78,52 @@ public class RedisConfig extends CachingConfigurerSupport {
 		this.timeToLive = timeToLive;
 	}
 	
+	/**
+	 * 自訂義處理異常方式，選擇忽略，不影響業務流程
+	 * 
+	 * TODO，尚未實現
+	 * 如果讀取redis發生異常，若為單一，可能影響不大；但如果請求很大，就會發生緩存雪崩問題，
+	 * 大量的查詢請求發送到db，導致db阻塞，因此需要使用多層緩存(參照CustomCacheResolver.class)。
+	 * 
+	 * 另外緩存讀寫發生異常，可能導致db和redis數據不一致。
+	 * 為了解決此問題，需要繼續拓展CacheErrorHandler的handleCachePutError、handleCacheEvictError方法，
+	 * 將redis put失敗的key保存下來，通過重新調用任務來刪除這些key對應的redis緩存
+	 * 
+	 * TODO，異常處實現，但redis停止時，重新連接方式未處理
+	 * 
+	 */
+	@Override
+	public CacheErrorHandler errorHandler() {
+		return new IgnoreExceptionCacheErrorHandler();
+	}
+	
+	/**
+	 * TODO 
+	 * 多層緩存實現，目前的實現方式，應該可以更好
+	 */
+	@Override
+	public CacheResolver cacheResolver() {
+		CacheManager concurrentMapCacheManager = new ConcurrentMapCacheManager();
+		CacheManager redisCacheManager = redisCacheManager();
+		
+		List<CacheManager> list = new ArrayList<>();
+		
+//		優先讀取記憶體內存
+		list.add(concurrentMapCacheManager);
+		
+//		在讀取Redis
+		list.add(redisCacheManager);
+		
+		return new CustomCacheResolver(list);
+	}
+
 	// 如果有多個CacheManager，@Primary直接指定那個是默認的
 	// @Primary
 	@Bean
-	public CacheManager cacheManager(RedisConnectionFactory connectionFactory) {
+	public CacheManager redisCacheManager() {
 		// RedisSerializationContext: This context provides {@link SerializationPair}s for key, value, hash-key (field), hash-value
+		// key值會為cachename，加上::key的設定
+		// Cacheable(cacheNames = {"dept"}, key="#id")	-> dept::id值
 		RedisSerializationContext.SerializationPair<String> keySerializationPair = 
 						RedisSerializationContext.SerializationPair.fromSerializer(keySerializer());
 		
@@ -78,14 +133,17 @@ public class RedisConfig extends CachingConfigurerSupport {
 		RedisCacheConfiguration config = RedisCacheConfiguration
 					// 保存時間
 					.defaultCacheConfig().entryTtl(this.timeToLive)
+//					測試保存時間
+//					.defaultCacheConfig().entryTtl(Duration.ofSeconds(30))
 					// key序列化規則
 					.serializeKeysWith(keySerializationPair)
 					// value序列化規則
 					.serializeValuesWith(valueSerializationPair)
 					// 不緩存空值
 					.disableCachingNullValues();
+					
 	
-//		還未比較出兩種的差異
+//		TODO 還未比較出兩種的差異
 //		RedisCacheManager redisCacheManager = RedisCacheManager.builder(connectionFactory)
 //												.cacheDefaults(config).transactionAware().build();
 		

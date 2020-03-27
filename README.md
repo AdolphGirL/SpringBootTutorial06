@@ -78,13 +78,19 @@ JAVA定義五個核心接口，分別是CacheProvider、CacheManager、Cache、E
 - 經由RedisTemplate操作: key值、value都為Object的操作，默認key的序列化器JdkSerializationRedisSerializer
 - 以上兩個方法，都可以使用opsXXX來操作Redis
 - JdkSerializationRedisSerializer，可以自訂義改為jsonSerializationRedisSerializer；或者將對象改為json物件，再傳入
-- 將對象改為json物件、寫入
+- 引入Redis會匹配為RedisAutoConfiguration，因此預設的ConcurrentMapCacheManager會取消，改為RedisCacheManager，由RedisCacheManager創建RedisCache來做為緩存組件
+- 雖然引用了Redis，其默認k-v都是物件的序列化(經由註解操作時)，因為RedisCacheManager創建時會傳入的參數為RedisTemplate<object, object> redisTemplate
+- 若要改為json，則需要自訂義RedisCacheManager
+- 原理參考文件``https://blog.csdn.net/weixin_37910453/article/details/89520719``
+- 將對象改為json物件、寫入(1.x版本)
   ```
   效果不佳
   redisTemplate.opsForValue().set(g.toJson("d1"), g.toJson(d));
   ```
-- 自行實作，根據RedisAutoConfiguration.class重新設計redisTemplate
+  
   ```
+  自行實作，根據RedisAutoConfiguration.class重新設計redisTemplate
+
   @Configuration
   public class RedisConfig {
     
@@ -100,7 +106,6 @@ JAVA定義五個核心接口，分別是CacheProvider、CacheManager、Cache、E
       return template;
     }
   ```
-- 引入Redis會匹配為RedisAutoConfiguration，因此預設的ConcurrentMapCacheManager會取消，改為RedisCacheManager，由RedisCacheManager創建RedisCache來做為緩存組件
-- 雖然引用了Redis，其默認k-v都是物件的序列化(經由註解操作時)，因為RedisCacheManager創建時會傳入的參數為RedisTemplate<object, object> redisTemplate
-- 若要改為json，則需要自訂義RedisCacheManager
-- 參考文件``https://blog.csdn.net/weixin_37910453/article/details/89520719``
+- 2.x版本的配置
+  ```
+  ```
